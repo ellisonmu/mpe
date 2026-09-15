@@ -1,0 +1,10 @@
+librosa
+numpy
+scipy
+soundfile
+matplotlib
+torch
+torchaudio
+openai-whisper
+jiwer
+pesq
