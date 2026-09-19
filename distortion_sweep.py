@@ -132,6 +132,10 @@ def parse_args():
     parser.add_argument("--kinds", type=str, default="undersample,quantize",
                          help="comma-separated distortions to sweep "
                               "(undersample, quantize; default: both)")
+    parser.add_argument("--algorithms", type=str, default=None,
+                         help="comma-separated algorithms to run, e.g. mp,comp "
+                              "(default: omp,lst,gclst). Algorithms already in the "
+                              "checkpoint are skipped, new ones are merged in")
     parser.add_argument("--values", type=str, default=None,
                          help="override the swept values (comma-separated); only "
                               "valid when a single --kinds entry is given")
@@ -158,6 +162,14 @@ def parse_args():
         parser.error(f"unknown --kinds: {unknown}; choose from {sorted(DISTORTIONS)}")
     if not args.kind_list:
         parser.error("--kinds must name at least one distortion")
+
+    args.algo_list = None
+    if args.algorithms is not None:
+        from synth_core import ALL_METHODS
+        args.algo_list = [a.strip() for a in args.algorithms.split(",") if a.strip()]
+        unknown = [a for a in args.algo_list if a not in ALL_METHODS]
+        if not args.algo_list or unknown:
+            parser.error(f"--algorithms must be from {list(ALL_METHODS)}; got unknown: {unknown}")
 
     args.value_list = None
     if args.values is not None:
@@ -213,7 +225,8 @@ def main():
                                      out_name=out_name, workers=args.workers,
                                      resume=not args.no_resume,
                                      distort=make_distortion(kind, args.seed),
-                                     include_input_ref=True)
+                                     include_input_ref=True,
+                                     methods=args.algo_list)
         plot_sweep(series, present, spec["xlabel"], baseline_wer, out_name)
         print(f"  -> {out_name}.csv / _wer.png")
 

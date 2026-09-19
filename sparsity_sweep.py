@@ -10,7 +10,7 @@ import argparse
 
 from mpe_common import (
     DEFAULT_P, SUBSET_SEED, N_SUBSET, GAMMA, OUT_DIR,
-    load_subset, load_whisper, get_or_compute_baseline,
+    ALL_METHODS, load_subset, load_whisper, get_or_compute_baseline,
     load_checkpoint, save_checkpoint, sweep_config,
     run_sweep, plot_sweep, default_workers,
 )
@@ -33,6 +33,13 @@ def parse_args():
                          default=",".join(str(k) for k in DEFAULT_K_VALUES),
                          help="comma-separated pulse counts to sweep "
                               f"(default: {','.join(str(k) for k in DEFAULT_K_VALUES)})")
+    parser.add_argument("--split", choices=["test-clean", "test-other"], default="test-clean",
+                         help="LibriSpeech split (default: test-clean). test-other results "
+                              "are saved to their own file, pulse_sweep_test-other.csv")
+    parser.add_argument("--algorithms", type=str, default=",".join(ALL_METHODS),
+                         help="comma-separated algorithms to run, e.g. mp,comp "
+                              f"(default: all = {','.join(ALL_METHODS)}). Algorithms already "
+                              "in the checkpoint are skipped, new ones are merged in")
     parser.add_argument("--workers", type=int, default=None,
                          help=f"parallel synthesis processes (default: {default_workers()})")
     parser.add_argument("--no-resume", action="store_true",
@@ -45,15 +52,21 @@ def parse_args():
         parser.error("--k-values must be a comma-separated list of integers")
     if not args.k_list or args.k_list[0] < 1:
         parser.error("--k-values must contain positive integers")
+
+    args.algo_list = [tok.strip() for tok in args.algorithms.split(",") if tok.strip()]
+    unknown = [a for a in args.algo_list if a not in ALL_METHODS]
+    if not args.algo_list or unknown:
+        parser.error(f"--algorithms must be from {list(ALL_METHODS)}; got unknown: {unknown}")
     return args
 
 
 def main():
     args = parse_args()
-    out_name = "pulse_sweep"
+    # test-clean keeps the original filename so existing results are reused
+    out_name = "pulse_sweep" if args.split == "test-clean" else f"pulse_sweep_{args.split}"
 
-    print("Loading LibriSpeech test-clean subset...")
-    dataset = load_subset(args.n_subset, args.seed)
+    print(f"Loading LibriSpeech {args.split} subset...")
+    dataset = load_subset(args.n_subset, args.seed, split=args.split)
     print(f"  {len(dataset)} utterances")
 
     fixed = {"p": args.p, "K": None, "seed": args.seed}
@@ -67,11 +80,12 @@ def main():
     baseline_wer = get_or_compute_baseline(ckpt, dataset, whisper_model, normalizer)
     save_checkpoint(out_name, ckpt)
 
-    print(f"Pulse sweep K={args.k_list}, p={args.p}, gamma={args.gamma}")
+    print(f"Pulse sweep K={args.k_list}, p={args.p}, gamma={args.gamma}, "
+          f"algorithms={args.algo_list}")
     series, present = run_sweep(dataset, "K", args.k_list, fixed,
                                  whisper_model, normalizer, gamma=args.gamma,
                                  out_name=out_name, workers=args.workers,
-                                 resume=not args.no_resume)
+                                 resume=not args.no_resume, methods=args.algo_list)
 
     plot_sweep(series, present, "Number of pulses (K)", baseline_wer, out_name)
     print(f"Done. Results and plot written to {OUT_DIR}/")

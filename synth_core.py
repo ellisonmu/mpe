@@ -3,7 +3,7 @@ import math
 import numpy as np
 from scipy.signal import lfilter
 
-from algorithms import omp, lst, gclst, dense
+from algorithms import mp, omp, comp, lst, gclst, dense
 from lsf import (lpc_to_lsf, lsf_to_lpc, quantize_lsfs, quantize_excitation,
                  delta_max_for_order)
 
@@ -21,6 +21,10 @@ METHODS = {
     "lst": lst,
     "gclst": gclst,
 }
+
+# Every selectable algorithm. METHODS stays the default set for the other
+# sweeps; sparsity_sweep.py can pick from this larger registry.
+ALL_METHODS = {**METHODS, "mp": mp, "comp": comp}
 
 DENSE_NAME = "dense_lpc"
 
@@ -178,7 +182,7 @@ def synthesize_mpe(fn, x, p, L, K, gamma=GAMMA, lsf_bits=LSF_BITS, exc_bits=EXC_
 
 
 def method_fn(name):
-    return dense if name == DENSE_NAME else METHODS[name]
+    return dense if name == DENSE_NAME else ALL_METHODS[name]
 
 
 def synthesize_utterance_job(job):
