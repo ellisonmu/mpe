@@ -2,7 +2,7 @@ import os
 import librosa
 import numpy as np
 from scipy.signal import lfilter
-from greedy import thresholding, omp, thresholding_gram
+from algorithms import omp, lst, gclst
 import soundfile as sf
 from plotting import visualize
 
@@ -51,30 +51,48 @@ def frame_h(A, L):
     impulse[0] = 1.0
     return lfilter([1.0], A, impulse)
 
-def multipulse_frame(fn, h, seg, K):
-    """Run a greedy pulse-selection method on one frame and rebuild the excited waveform."""
-    m, _, locs = fn(h, seg, K=K)
-    e = np.zeros(len(seg))
-    e[locs] = m
-    return np.convolve(e, h)[:len(seg)]
+def weighting_filter(A, gamma=1):
+    p = len(A) - 1
+    powers = gamma ** np.arange(p + 1)
+    A_gamma = A * powers
+    return A, A_gamma
 
-def synthesize(fn, x, p, L, K):
+def synthesize(fn, x, p, L, K, gamma=1):
     out = np.zeros(N)
     for i in range(n_frames):
-        seg = x[i*L:(i+1)*L]
+        start, end = i * L, (i + 1) * L
+        seg = x[start:end]
         if len(seg) <= p or np.sum(seg**2) < 1e-12:
             continue
         A = fit_lpc(seg, p)
         h = frame_h(A, L)
         if not np.all(np.isfinite(h)) or np.abs(h).max() > 1e6:
             continue
-        out[i*L:(i+1)*L] = multipulse_frame(fn, h, seg, K)
+        
+        ring = np.zeros(L)
+        hist = np.pad(out[max(0, start - p):start][::-1], (0, max(0, p - start)))
+        buf = np.concatenate((hist, np.zeros(0)))
+        for n in range(L):
+                    y = -np.dot(A[1:], buf[:p])
+                    ring[n] = y
+                    buf = np.concatenate(([y], buf[:-1]))
+        target = seg - ring
+        
+        b_w, a_w = weighting_filter(A, gamma)
+        target_w = lfilter(b_w, a_w, target)
+        h_w = lfilter(b_w, a_w, h)
+        
+        e = np.zeros(L)
+        m, locs = fn(h_w, target_w, K=K)
+        e[locs] = m
+        
+        out[start:end] = ring + np.convolve(e, h)[:L]
     return out
 
 x_omp = synthesize(omp, x, p, L, n_pulses)
-x_thresh = synthesize(thresholding, x, p, L, n_pulses)
-x_thresh_gram = synthesize(thresholding_gram, x, p, L, n_pulses)
+x_lst = synthesize(lst, x, p, L, n_pulses)
+x_gclst = synthesize(gclst, x, p, L, n_pulses)
 
 save(x_omp, "omp", sr)
-save(x_thresh, "thresh", sr)
-save(x_thresh_gram, "thresh_gram", sr)
+save(x_lst, "lst", sr)
+save(x_gclst, "gclst", sr)
