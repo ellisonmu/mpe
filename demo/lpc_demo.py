@@ -4,7 +4,7 @@ import numpy as np
 from scipy.signal import lfilter
 from algorithms import omp, lst, gclst
 import soundfile as sf
-from plotting import visualize
+from demo.plotting import visualize
 
 def save(audio, label, sr):
     folder = label

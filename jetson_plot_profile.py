@@ -16,9 +16,6 @@ ROOT = Path(__file__).resolve().parent
 FIG_DIR = ROOT / "figures"
 FRAME_BUDGET_US = FRAME_MS * 1000.0
 
-# Okabe-Ito colorblind-safe qualitative palette (Okabe & Ito, 2008) -- distinct
-# under protanopia/deuteranopia without relying on a red-vs-green contrast.
-# Markers differ per algorithm too, so identity never rests on color alone.
 ALGO_STYLE = {
     "lst":      ("LST",              "#0072B2", "o"),
     "mp":       ("MP",               "#E69F00", "s"),
@@ -181,7 +178,6 @@ def save(fig, name):
 # ---------------------------------------------------------------------------
 
 def fig_search_latency(rows, devices, algos):
-    """Search-only latency vs K, log-log, 95% CI across runs."""
     k_values = sorted({r["K"] for r in rows})
     fig, ax = plt.subplots(figsize=(7, 5.2))
     draw_series(ax, rows, devices, algos, "mean_latency_us")
@@ -197,7 +193,6 @@ def fig_search_latency(rows, devices, algos):
 
 
 def fig_search_budget(rows, devices, algos):
-    """Search time as % of the frame budget -- feasibility of the search alone."""
     k_values = sorted({r["K"] for r in rows})
     fig, ax = plt.subplots(figsize=(7, 5.2))
     draw_series(ax, rows, devices, algos, "search_pct_of_budget", with_band=False)
@@ -215,7 +210,6 @@ def fig_search_budget(rows, devices, algos):
 
 
 def fig_total_budget(rows, devices, algos):
-    """Front end + search as % of budget -- the real-time feasibility question."""
     k_values = sorted({r["K"] for r in rows})
     fig, ax = plt.subplots(figsize=(7, 5.2))
     draw_series(ax, rows, devices, algos, "total_pct_of_budget", with_band=False)
@@ -244,7 +238,6 @@ def fig_total_budget(rows, devices, algos):
 
 
 def fig_energy(rows, devices, algos):
-    """Energy per frame vs K, from the TX2's INA3221 rails."""
     if all(np.isnan(r.get("energy_mj_per_frame", float("nan"))) for r in rows):
         print("  no power data (energy_mj_per_frame all nan) -- skipping energy figure")
         return
@@ -262,9 +255,6 @@ def fig_energy(rows, devices, algos):
 
 
 def print_findings(rows, devices, algos):
-    """Console summary of the two headline results, so they don't get lost in
-    a CSV: whether the front end alone clears the frame budget, and where (if
-    anywhere) OMP-Cholesky overtakes direct OMP."""
     print("\n=== Key findings ===")
     fe = [r["frontend_us_per_frame"] for r in rows if not np.isnan(r["frontend_us_per_frame"])]
     if fe:

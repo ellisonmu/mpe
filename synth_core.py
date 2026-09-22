@@ -20,16 +20,13 @@ METHODS = {
     "omp": omp,
     "lst": lst,
     "gclst": gclst,
+    "mp": mp, 
+    "comp": comp
 }
-
-# Every selectable algorithm. METHODS stays the default set for the other
-# sweeps; sparsity_sweep.py can pick from this larger registry.
-ALL_METHODS = {**METHODS, "mp": mp, "comp": comp}
 
 DENSE_NAME = "dense_lpc"
 
 GAIN_BITS = 6
-
 
 def mpe_frame_bits(p, K, L=L, lsf_bits=LSF_BITS, exc_bits=EXC_BITS,
                    gain_bits=GAIN_BITS):
@@ -182,7 +179,7 @@ def synthesize_mpe(fn, x, p, L, K, gamma=GAMMA, lsf_bits=LSF_BITS, exc_bits=EXC_
 
 
 def method_fn(name):
-    return dense if name == DENSE_NAME else ALL_METHODS[name]
+    return dense if name == DENSE_NAME else METHODS[name]
 
 
 def synthesize_utterance_job(job):
