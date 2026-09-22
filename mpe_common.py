@@ -28,7 +28,7 @@ import whisper
 from whisper.normalizers import EnglishTextNormalizer
 
 from synth_core import (SR, FRAME_MS, L, GAMMA, LSF_BITS, EXC_BITS, POLE_MARGIN,
-                        METHODS, ALL_METHODS, DENSE_NAME, synthesize_mpe, fit_lpc, lpc_matrix,
+                        METHODS, DENSE_NAME, synthesize_mpe, fit_lpc, lpc_matrix,
                         levinson_durbin, frame_impulse_response, weighting_filter,
                         _zero_input_response, synthesize_utterance_job)
 
@@ -116,11 +116,6 @@ def bootstrap_ci(values, n_boot=N_BOOTSTRAP, ci=95, seed=0):
     lo, hi = np.percentile(boot_means, [(100 - ci) / 2, 100 - (100 - ci) / 2])
     return float(values.mean()), float(lo), float(hi)
 
-
-# ---------------------------------------------------------------------------
-# Checkpointing: results are keyed by param value so a re-run skips finished work
-# ---------------------------------------------------------------------------
-
 def results_path(out_name):
     return os.path.join(OUT_DIR, f"{out_name}.csv")
 
@@ -141,14 +136,7 @@ def sweep_config(param_name, fixed_params, gamma, n_subset, seed):
         "pole_margin": POLE_MARGIN,
     }
 
-
 def load_checkpoint(out_name, config, resume=True):
-    """Existing checkpoint if it matches `config`, else a fresh one.
-
-    The checkpoint lives entirely in the CSV: two leading `#`-comment lines
-    carry the config and baseline WER (as JSON, so they round-trip exactly),
-    then the usual header + data rows.
-    """
     fresh = {"config": config, "series": list(SERIES),
              "baseline_wer": None, "by_value": {}}
     path = results_path(out_name)
@@ -197,9 +185,6 @@ def load_checkpoint(out_name, config, resume=True):
 
 
 def save_checkpoint(out_name, ckpt):
-    """Write the checkpoint as a single CSV: config/baseline as leading `#`
-    comment lines (JSON-encoded, so load_checkpoint round-trips them exactly),
-    then one row per swept value, one column per series' wer/wer_lo/wer_hi."""
     param_name = ckpt["config"]["param_name"]
     by_value = ckpt.get("by_value", {})
     baseline_wer = ckpt.get("baseline_wer")
@@ -251,14 +236,8 @@ def get_or_compute_baseline(ckpt, dataset, whisper_model, normalizer):
     print(f"  baseline WER = {baseline:.4f}")
     return baseline
 
-
-# ---------------------------------------------------------------------------
-# Sweeps
-# ---------------------------------------------------------------------------
-
 @contextlib.contextmanager
 def _synthesis_map(workers):
-    """map() over synthesis jobs, parallel across processes unless workers<=1."""
     if workers <= 1:
         yield map
     else:
@@ -272,40 +251,20 @@ def default_workers():
 
 def run_sweep(dataset, param_name, param_values, fixed_params, whisper_model, normalizer,
               gamma=GAMMA, out_name=None, workers=None, resume=True,
-              distort=None, include_input_ref=False, methods=None):
-    """Sweep `param_name` over `param_values`, checkpointing after each value.
-
-    `methods` (names from ALL_METHODS, default: METHODS) selects which
-    algorithms to run. Algorithms already present in the checkpoint for a value
-    are skipped and new ones are merged into that value's row, so a run with
-    a subset of algorithms can be topped up later with the rest.
-
-    `distort(audio, value, idx) -> audio` optionally transforms the input audio
-    per swept value (used by distortion_sweep.py); the coder then runs on the
-    distorted signal. With `include_input_ref`, the distorted-but-uncoded audio
-    is transcribed too, so damage caused by the distortion itself can be told
-    apart from damage the coder adds on top of it.
-    """
-    methods = list(METHODS) if methods is None else list(methods)
-    series_names = methods + [DENSE_NAME]
+              distort=None, include_input_ref=False):
+    series_names = list(METHODS) + [DENSE_NAME]
     if include_input_ref:
         series_names.append(INPUT_NAME)
 
     config = sweep_config(param_name, fixed_params, gamma,
                           len(dataset), fixed_params.get("seed"))
     ckpt = load_checkpoint(out_name, config, resume) if out_name else {
-        "config": config, "series": [], "baseline_wer": None, "by_value": {}}
-    # keep series from earlier runs (e.g. omp/lst/gclst) alongside the new ones
-    ckpt["series"] = list(ckpt.get("series") or []) + [
-        n for n in series_names if n not in (ckpt.get("series") or [])]
+        "config": config, "series": series_names, "baseline_wer": None, "by_value": {}}
+    ckpt["series"] = series_names
     by_value = ckpt["by_value"]
 
-    def _missing(v):
-        have = by_value.get(str(v), {})
-        return [n for n in series_names if n not in have]
-
-    todo = [v for v in param_values if _missing(v)]
-    done = [v for v in param_values if not _missing(v)]
+    todo = [v for v in param_values if str(v) not in by_value]
+    done = [v for v in param_values if str(v) in by_value]
     if done:
         print(f"  skipping {len(done)} already done: {done}")
     if not todo:
@@ -313,10 +272,6 @@ def run_sweep(dataset, param_name, param_values, fixed_params, whisper_model, no
         return checkpoint_to_series(ckpt, param_values)
     print(f"  running {len(todo)}: {todo}")
 
-    # dense_lpc ignores K, so it can be computed once and reused -- but only on
-    # a plain K sweep. On a p sweep the filter changes with p, and on a
-    # distortion sweep the input audio itself changes, so it must be redone
-    # for every value.
     reuse_dense = (param_name == "K") and (distort is None)
     dense_cached = None
     if reuse_dense:
@@ -336,31 +291,27 @@ def run_sweep(dataset, param_name, param_values, fixed_params, whisper_model, no
             audios = [audio if distort is None else distort(audio, val, i)
                       for i, (audio, _) in enumerate(dataset)]
 
-            existing = by_value.get(str(val), {})
-            run_methods = [n for n in methods if n not in existing]
-            names = list(run_methods)
-            need_dense = (DENSE_NAME not in existing
-                          and ((not reuse_dense) or (dense_cached is None)))
+            names = list(METHODS)
+            need_dense = (not reuse_dense) or (dense_cached is None)
             if need_dense:
                 names.append(DENSE_NAME)
 
             jobs = [(i, a, names, p, K, gamma) for i, a in enumerate(audios)]
             synth = dict(pmap(synthesize_utterance_job, jobs))
 
-            need_input = include_input_ref and INPUT_NAME not in existing
             wers = {n: [] for n in names}
-            if need_input:
+            if include_input_ref:
                 wers[INPUT_NAME] = []
             for i, (_, transcript) in enumerate(dataset):
                 for n in names:
                     hyp = transcribe(whisper_model, synth[i][n])
                     wers[n].append(compute_wer(normalizer, transcript, hyp))
-                if need_input:
+                if include_input_ref:
                     hyp = transcribe(whisper_model, audios[i])
                     wers[INPUT_NAME].append(compute_wer(normalizer, transcript, hyp))
 
-            block = dict(existing)
-            for n in run_methods:
+            block = {}
+            for n in METHODS:
                 mean, lo, hi = bootstrap_ci(wers[n])
                 block[n] = {"wer": mean, "wer_lo": lo, "wer_hi": hi}
             if need_dense:
@@ -368,9 +319,9 @@ def run_sweep(dataset, param_name, param_values, fixed_params, whisper_model, no
                 block[DENSE_NAME] = {"wer": mean, "wer_lo": lo, "wer_hi": hi}
                 if reuse_dense:
                     dense_cached = block[DENSE_NAME]
-            elif DENSE_NAME not in block:
+            else:
                 block[DENSE_NAME] = dict(dense_cached)
-            if need_input:
+            if include_input_ref:
                 mean, lo, hi = bootstrap_ci(wers[INPUT_NAME])
                 block[INPUT_NAME] = {"wer": mean, "wer_lo": lo, "wer_hi": hi}
 

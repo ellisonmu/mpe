@@ -14,7 +14,7 @@ import numpy as np
 from mpe_common import DEFAULT_P, N_SUBSET, SUBSET_SEED, OUT_DIR, load_subset
 from synth_core import GAMMA, L, METHODS, dense, synthesize_mpe
 
-DEFAULT_K_VALUES = [1, 3, 5, 7, 10, 12, 15, 20, 25, 30, 35]
+DEFAULT_K_VALUES = [5, 10, 20, 35]
 
 
 def excitation(fn, h_w, target_w, K):

@@ -6,30 +6,6 @@ from scipy.signal import resample_poly
 
 from synth_core import SR
 
-def maskhelper(alpha, N, rng=None):
-    r = np.random.rand(N) if rng is None else rng.random(N)
-    return r < alpha
-
-
-def noise_gen(N, alpha, Dclass=2, rng=None):
-    """alpha in [0, 1] scales the noise amplitude: 0 = no noise, 1 = full
-    dynamic-range noise (uniform over the whole [-1, 1] signal range).
-
-    Pass `rng` (a numpy Generator) to make the noise reproducible -- the sweep
-    needs that so a resumed run reproduces the noise an earlier run used.
-    """
-    G = (np.random.rand(N) if rng is None else rng.random(N)) - 0.5
-    R = G * 0.5
-    if Dclass == 1:
-        mask = maskhelper(alpha, N, rng)
-        return R * mask
-    elif Dclass == 2:
-        mask = maskhelper(alpha, N, rng)
-        return np.sqrt(alpha) * R * mask
-    else:
-        print("Invalid dithering class. Use 1 (masked), 2 (masked+scaled)")
-
-
 def uniform_quantization(x, bits):
     if bits < 1:
         raise ValueError("bits must be >= 1")
@@ -44,33 +20,6 @@ def uniform_quantization(x, bits):
     return xq.astype(np.float32)
 
 
-def noise_app(input_signal, bitdepth, param, Qtype='uniform', Dtype='subtractive',
-              rng=None):
-    """Dither -> quantize -> (optionally) subtract the dither back out."""
-    peak = float(np.max(np.abs(input_signal)))
-    input_signal = input_signal / peak if peak != 0 else input_signal
-
-    dither = noise_gen(input_signal.size, param, Dclass=2, rng=rng)
-    dithering = input_signal + dither
-
-    if Qtype == 'uniform':
-        quantized = uniform_quantization(dithering, bitdepth)
-    else:
-        print("Invalid quantization type.")
-        return
-
-    if Dtype == 'subtractive':
-        processed = quantized - dither
-    elif Dtype == 'nonsubtractive':
-        processed = quantized
-    else:
-        print("Invalid dithering type. Use 'subtractive' or 'non-subtractive'.")
-        return
-
-    normalized = processed / np.max(np.abs(processed))
-    return normalized
-
-
 def _match_length(x, n):
     if len(x) == n:
         return x
@@ -78,9 +27,6 @@ def _match_length(x, n):
 
 
 def undersample(audio, fs_khz, sr=SR):
-    """Resample to fs_khz then back to sr, band-limiting the signal to
-    fs_khz/2. The pipeline always sees `sr`-rate audio, so only the lost
-    bandwidth differs; fs_khz >= sr/1000 is a no-op."""
     x = np.asarray(audio, dtype=np.float64)
     target = int(round(float(fs_khz) * 1000))
     if target >= sr:
@@ -114,7 +60,6 @@ DISTORTIONS = {
     },
 }
 
-
 def make_distortion(kind, seed):
     """distort(audio, value, idx) -> audio, as run_sweep expects."""
     if kind == "undersample":
@@ -132,10 +77,6 @@ def parse_args():
     parser.add_argument("--kinds", type=str, default="undersample,quantize",
                          help="comma-separated distortions to sweep "
                               "(undersample, quantize; default: both)")
-    parser.add_argument("--algorithms", type=str, default=None,
-                         help="comma-separated algorithms to run, e.g. mp,comp "
-                              "(default: omp,lst,gclst). Algorithms already in the "
-                              "checkpoint are skipped, new ones are merged in")
     parser.add_argument("--values", type=str, default=None,
                          help="override the swept values (comma-separated); only "
                               "valid when a single --kinds entry is given")
@@ -162,14 +103,6 @@ def parse_args():
         parser.error(f"unknown --kinds: {unknown}; choose from {sorted(DISTORTIONS)}")
     if not args.kind_list:
         parser.error("--kinds must name at least one distortion")
-
-    args.algo_list = None
-    if args.algorithms is not None:
-        from synth_core import ALL_METHODS
-        args.algo_list = [a.strip() for a in args.algorithms.split(",") if a.strip()]
-        unknown = [a for a in args.algo_list if a not in ALL_METHODS]
-        if not args.algo_list or unknown:
-            parser.error(f"--algorithms must be from {list(ALL_METHODS)}; got unknown: {unknown}")
 
     args.value_list = None
     if args.values is not None:
@@ -225,8 +158,7 @@ def main():
                                      out_name=out_name, workers=args.workers,
                                      resume=not args.no_resume,
                                      distort=make_distortion(kind, args.seed),
-                                     include_input_ref=True,
-                                     methods=args.algo_list)
+                                     include_input_ref=True)
         plot_sweep(series, present, spec["xlabel"], baseline_wer, out_name)
         print(f"  -> {out_name}.csv / _wer.png")
 

@@ -8,7 +8,6 @@
 #   ./run_jetson_profile.sh --repeats 40         # any flag is passed through
 #   CORE=4 ./run_jetson_profile.sh               # pick a different A57 core
 #
-# Why each step matters:
 #   nvpmodel -m 0 + jetson_clocks   locks clocks, so DVFS and thermal ramp do
 #                                   not make the first repeat differ from the last
 #   OPENBLAS_CORETYPE=ARMV8         without it NumPy SIGILLs on the TX2's cores
@@ -27,7 +26,8 @@ set -euo pipefail
 CORE="${CORE:-3}"                       # an A57 core (0, 3, 4 or 5)
 AUDIO="${AUDIO:-input/input.wav}"       # quote globs: AUDIO='speech/*.wav'
 K_VALUES="${K_VALUES:-1,2,5,10,20,35}"  # K=35 is where GCLST's scaling win shows
-ALGOS="${ALGOS:-omp,lst,gclst}"
+ALGOS="${ALGOS:-}"                      # empty -> jetson_mpe_profile.py's own
+                                         # default (all of synth_core.METHODS)
 REPEATS="${REPEATS:-30}"
 ITERS="${ITERS:-200}"
 OUT_PREFIX="${OUT_PREFIX:-jetson_mpe_profiling}"
@@ -51,7 +51,7 @@ export OPENBLAS_CORETYPE=ARMV8
 echo
 echo "=== Environment ==="
 echo "  core pinned   : $CORE"
-echo "  algos         : $ALGOS"
+echo "  algos         : ${ALGOS:-(script default: all of METHODS)}"
 echo "  K values      : $K_VALUES"
 echo "  repeats       : $REPEATS   iters/run: $ITERS"
 echo "  audio         : $AUDIO"
@@ -71,10 +71,13 @@ fi
 # ------------------------------------------------------------------- run ----
 echo
 echo "=== Profiling (logging to $LOG) ==="
+ALGOS_ARGS=()
+[ -n "$ALGOS" ] && ALGOS_ARGS=(--algos "$ALGOS")
+
 # shellcheck disable=SC2086
 taskset -c "$CORE" $PY jetson_mpe_profile.py \
     --audio $AUDIO \
-    --algos "$ALGOS" \
+    "${ALGOS_ARGS[@]}" \
     --k-values "$K_VALUES" \
     --repeats "$REPEATS" \
     --iters "$ITERS" \

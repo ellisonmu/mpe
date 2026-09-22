@@ -30,7 +30,7 @@ import soundfile as sf
 from synth_core import (SR, FRAME_MS, L, GAMMA, DENSE_NAME, METHODS,
                         method_fn, synthesize_mpe)
 
-DEFAULT_K_VALUES = [2,3,4,5,6,7,8,10,12,14,16,18,20,25,30,25]
+DEFAULT_K_VALUES = [2,3,4,5,6,7,8,9,10,12,14,16,18,20,25,30,35]
 DEFAULT_WARMUP = 200
 DEFAULT_ITERS = 1000
 DEFAULT_REPEATS = 5
@@ -41,19 +41,32 @@ SUMMARY_CSV = "jetson_mpe_profiling_summary.csv"
 _T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365,
         8: 2.306, 9: 2.262, 10: 2.228, 12: 2.179, 15: 2.131, 20: 2.086, 30: 2.042}
 
+
 def t95(n_runs):
-    """Critical value for n_runs samples, nan when a CI is undefined (n<2)."""
     if n_runs < 2:
         return float("nan")
     df = n_runs - 1
     return _T95[max(d for d in _T95 if d <= df)]
 
 
-# ---------------------------------------------------------------------------
-# Device / environment
-# ---------------------------------------------------------------------------
+def get_cupy(device):
+    if device != "gpu":
+        return None
+    try:
+        import cupy as cp
+    except ImportError:
+        print("  cupy not importable; GPU timing unavailable", file=sys.stderr)
+        return None
+    try:
+        cp.cuda.runtime.getDeviceCount()
+    except Exception as exc:                       
+        print(f"  cupy present but no usable device ({exc})", file=sys.stderr)
+        return None
+    return cp
+
 
 def container_tag():
+    """Short description of what this is running on, for the CSV."""
     bits = [platform.machine(), f"py{platform.python_version()}",
             f"numpy{np.__version__}", f"threads={THREADS}"]
     core = os.environ.get("OPENBLAS_CORETYPE")
@@ -61,19 +74,14 @@ def container_tag():
         bits.append(f"OPENBLAS_CORETYPE={core}")
     return " ".join(bits)
 
-
-# ---------------------------------------------------------------------------
-# Jetson on-board power rails (INA3221)
-# ---------------------------------------------------------------------------
-
 _RAIL_GLOBS = [
     "/sys/bus/i2c/drivers/ina3221x/*/iio:device0/in_power*_input",
     "/sys/bus/i2c/drivers/ina3221/*/hwmon/hwmon*/power*_input",
     "/sys/devices/platform/*/i2c*/*/iio:device0/in_power*_input",
 ]
 
+
 def find_power_rails():
-    """Readable INA3221 power-rail files, or [] when not on a Jetson."""
     for pattern in _RAIL_GLOBS:
         hits = sorted(glob.glob(pattern))
         if hits:
@@ -88,7 +96,6 @@ def find_power_rails():
 
 
 def read_power_mw(rails):
-    """Total instantaneous board power in mW across the given rails."""
     total = 0.0
     for path in rails:
         try:
@@ -100,7 +107,6 @@ def read_power_mw(rails):
 
 
 def peak_rss_mb():
-    """Peak resident set size in MB, or nan where unavailable."""
     try:
         import resource
         kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
@@ -113,10 +119,6 @@ def peak_rss_mb():
     except Exception:
         return float("nan")
 
-
-# ---------------------------------------------------------------------------
-# Real audio -> real search inputs
-# ---------------------------------------------------------------------------
 
 def load_audio(patterns, max_seconds=None):
     paths = []
@@ -146,12 +148,6 @@ def load_audio(patterns, max_seconds=None):
 
 
 def capture_search_inputs(algo, audio, p, K, gamma):
-    """Run the real closed-loop coder once; return its per-frame (h_w, target_w)
-    search inputs plus the wall-clock cost of the whole synthesis.
-
-    The front-end time is (synthesis time - search time), reported so the search
-    numbers can be read as a share of a full frame.
-    """
     capture = []
     t0 = time.perf_counter()
     synthesize_mpe(method_fn(algo), audio, p, L, K, gamma=gamma, capture=capture)
@@ -160,10 +156,6 @@ def capture_search_inputs(algo, audio, p, K, gamma):
         raise RuntimeError(f"{algo}: no frames captured -- audio too short or silent")
     return capture, synth_s
 
-
-# ---------------------------------------------------------------------------
-# Timing
-# ---------------------------------------------------------------------------
 
 def time_search_cpu(fn, frames, K, warmup, iters, rails=()):
     n = len(frames)
@@ -182,6 +174,27 @@ def time_search_cpu(fn, frames, K, warmup, iters, rails=()):
             power.append(read_power_mw(rails))
     return lat_us, (float(np.mean(power)) if power else float("nan"))
 
+
+def time_search_gpu(cp, fn, frames, K, warmup, iters, rails=()):
+    n = len(frames)
+    for i in range(warmup):
+        h_w, target_w = frames[i % n]
+        fn(h_w, target_w, K=K)
+    cp.cuda.Device().synchronize()
+
+    start, end = cp.cuda.Event(block=True), cp.cuda.Event(block=True)
+    power = []
+    lat_us = np.empty(iters, dtype=float)
+    for i in range(iters):
+        h_w, target_w = frames[i % n]
+        start.record()
+        fn(h_w, target_w, K=K)
+        end.record()
+        end.synchronize()
+        lat_us[i] = cp.cuda.get_elapsed_time(start, end) * 1e3   # ms -> us
+        if rails and i % 64 == 0:
+            power.append(read_power_mw(rails))
+    return lat_us, (float(np.mean(power)) if power else float("nan"))
 
 FRAME_BUDGET_US = FRAME_MS * 1000.0
 
@@ -202,11 +215,6 @@ def summarize(lat_us, n_samples, power_mw=float("nan")):
         # energy the search spends per frame; the figure that matters on battery
         "energy_mj_per_frame": (power_mw * 1e-3) * (mean * 1e-6) * 1e3,
     }
-
-
-# ---------------------------------------------------------------------------
-# CSV out (pandas when available, stdlib csv otherwise)
-# ---------------------------------------------------------------------------
 
 def write_csv(path, rows, fieldnames):
     if not rows:
@@ -266,32 +274,30 @@ def summarize_across_runs(rows):
             "sd_across_runs_us": sd,
             "p99_latency_us": max(r["p99_latency_us"] for r in rs),
             "throughput_samples_per_s": n_samples / (mean * 1e-6),
+            # a slower latency bound is a lower throughput bound, hence the swap
             "throughput_samples_per_s_lo": n_samples / (hi * 1e-6) if hi == hi else float("nan"),
             "throughput_samples_per_s_hi": n_samples / (lo * 1e-6) if lo == lo and lo > 0 else float("nan"),
             "rtf": (n_samples / SR) / (mean * 1e-6),
             "search_pct_of_budget": 100.0 * mean / FRAME_BUDGET_US,
+            # worst run's tail, not an average of tails
             "p99_pct_of_budget": max(r["p99_pct_of_budget"] for r in rs),
             "power_mw": statistics.mean([r["power_mw"] for r in rs]),
             "energy_mj_per_frame": statistics.mean([r["energy_mj_per_frame"] for r in rs]),
             "frontend_us_per_frame": statistics.mean([r["frontend_us_per_frame"] for r in rs]),
             "search_share_of_frame": statistics.mean([r["search_share_of_frame"] for r in rs]),
             "total_pct_of_budget": statistics.mean([r["total_pct_of_budget"] for r in rs]),
+            # real time only counts if EVERY run cleared the budget
             "realtime_ok": all(r["realtime_ok"] for r in rs),
             "threads": rs[0]["threads"],
             "container": rs[0]["container"],
         })
     return out
 
-
-# ---------------------------------------------------------------------------
-# Driver
-# ---------------------------------------------------------------------------
-
 def parse_args():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--audio", nargs="+", default=["demo/input/input.wav"],
-                    help="audio file(s) or glob(s); concatenated (default: demo/input/input.wav)")
+    ap.add_argument("--audio", nargs="+", default=["input/input.wav"],
+                    help="audio file(s) or glob(s); concatenated (default: input/input.wav)")
     ap.add_argument("--max-seconds", type=float, default=None,
                     help="truncate the concatenated audio to this many seconds")
     ap.add_argument("--algos", type=str, default=",".join(METHODS),
@@ -308,6 +314,8 @@ def parse_args():
                     help=f"timed searches per (algo, K, run) (default: {DEFAULT_ITERS})")
     ap.add_argument("--warmup", type=int, default=DEFAULT_WARMUP,
                     help=f"untimed warmup searches (default: {DEFAULT_WARMUP})")
+    ap.add_argument("--device", choices=("cpu", "gpu"), default="cpu",
+                    help="cpu = perf_counter; gpu = CUDA events (needs CuPy) (default: cpu)")
     ap.add_argument("--threads", type=int, default=1,
                     help="BLAS threads; 1 models a single-core edge budget and "
                          "keeps OMP's dense solves from being flattered (default: 1)")
@@ -342,7 +350,10 @@ def parse_args():
 
 def main():
     args = parse_args()
-    device = "cpu"
+    cp = get_cupy(args.device)
+    device = "gpu" if cp is not None else "cpu"
+    if args.device == "gpu" and cp is None:
+        print("  falling back to CPU timing")
     container = container_tag()
 
     if platform.machine().startswith(("aarch64", "arm")) and not os.environ.get("OPENBLAS_CORETYPE"):
@@ -371,19 +382,20 @@ def main():
     for algo in args.algo_list:
         for K in args.k_list:
             cell_i += 1
-            # Capture the search inputs this method actually sees. Closed loop,
-            # so they are method-specific; recapture per (algo, K).
             frames, synth_s = capture_search_inputs(algo, audio, args.p, K, args.gamma)
             n_frames = len(frames)
             fn = method_fn(algo)
             k_eff = 0 if algo == DENSE_NAME else K
 
             for run in range(1, args.repeats + 1):
-                lat_us, pw = time_search_cpu(fn, frames, k_eff,
-                                             args.warmup, args.iters, rails)
+                if cp is not None:
+                    lat_us, pw = time_search_gpu(cp, fn, frames, k_eff,
+                                                 args.warmup, args.iters, rails)
+                else:
+                    lat_us, pw = time_search_cpu(fn, frames, k_eff,
+                                                 args.warmup, args.iters, rails)
                 stats = summarize(lat_us, L, pw)
 
-                # front end = whole closed-loop synthesis minus its search time
                 search_s = stats["mean_latency_us"] * 1e-6 * n_frames
                 frontend_us = max(0.0, (synth_s - search_s)) / n_frames * 1e6
                 frame_us = stats["mean_latency_us"] + frontend_us

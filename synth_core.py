@@ -3,7 +3,7 @@ import math
 import numpy as np
 from scipy.signal import lfilter
 
-from algorithms import mp, omp, comp, lst, gclst, dense
+from algorithms import omp, lst, gclst, dense
 from lsf import (lpc_to_lsf, lsf_to_lpc, quantize_lsfs, quantize_excitation,
                  delta_max_for_order)
 
@@ -20,13 +20,12 @@ METHODS = {
     "omp": omp,
     "lst": lst,
     "gclst": gclst,
-    "mp": mp, 
-    "comp": comp
 }
 
 DENSE_NAME = "dense_lpc"
 
 GAIN_BITS = 6
+
 
 def mpe_frame_bits(p, K, L=L, lsf_bits=LSF_BITS, exc_bits=EXC_BITS,
                    gain_bits=GAIN_BITS):
@@ -42,31 +41,15 @@ def mpe_bitrate_kbps(p, K, L=L, sr=SR, **kw):
 
 def mpe_frame_bits_combinatorial(p, K, L=L, n_sub=1, lsf_bits=LSF_BITS,
                                  exc_bits=EXC_BITS, gain_bits=GAIN_BITS):
-    """B_frame = R_LSF + N_sub*(ceil(log2 C(L,K)) + K*(1+R_amp) + R_gain).
-
-    Combinatorially indexes pulse LOCATIONS: a set of K positions among L needs
-    only ceil(log2 C(L,K)) bits, not K*ceil(log2 L) -- mpe_frame_bits pays for
-    a location ordering the decoder never uses (log2(K!) wasted bits) plus
-    rounding each index up to a whole bit. Magnitudes stay a fixed-rate sign +
-    R_amp-bit code per pulse: exc_bits = 1 (sign) + R_amp, so K*(1+R_amp) ==
-    K*exc_bits -- only the location field gets the combinatorial treatment.
-    N_sub subframes would share one set of LSFs (R_LSF, paid once per frame)
-    while each gets its own location/magnitude/gain fields; this project
-    searches the excitation once per whole analysis frame rather than per
-    subframe, so the default N_sub=1 makes this L the same frame length used
-    everywhere else in synth_core.
-    """
     r_lsf = p * lsf_bits
     loc_bits = math.ceil(math.log2(math.comb(L, K)))
     return r_lsf + n_sub * (loc_bits + K * exc_bits + gain_bits)
 
 
 def mpe_bitrate_kbps_combinatorial(p, K, L=L, sr=SR, n_sub=1, **kw):
-    """R_total = B_frame / T_frame, in kbit/s; T_frame = n_sub * L / sr."""
     bits = mpe_frame_bits_combinatorial(p, K, L=L, n_sub=n_sub, **kw)
     t_frame_s = n_sub * L / sr
     return bits / t_frame_s / 1000.0
-
 
 def lpc_matrix(seg, p):
     n = len(seg)
@@ -98,8 +81,7 @@ def fit_lpc(seg, p):
     H = lpc_matrix(seg, p)
     A = levinson_durbin(seg, p)
     if A is None:
-        A = np.concatenate(([1.0], np.zeros(p)))   # neutral, trivially stable
-    return A, H, A[1:]
+        A = np.concatenate(([1.0], np.zeros(p)))  
 
 def frame_impulse_response(A, L):
     impulse = np.zeros(L)

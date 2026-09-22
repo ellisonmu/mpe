@@ -10,7 +10,7 @@ import argparse
 
 from mpe_common import (
     DEFAULT_P, SUBSET_SEED, N_SUBSET, GAMMA, OUT_DIR,
-    ALL_METHODS, load_subset, load_whisper, get_or_compute_baseline,
+    METHODS, load_subset, load_whisper, get_or_compute_baseline,
     load_checkpoint, save_checkpoint, sweep_config,
     run_sweep, plot_sweep, default_workers,
 )
@@ -36,9 +36,9 @@ def parse_args():
     parser.add_argument("--split", choices=["test-clean", "test-other"], default="test-clean",
                          help="LibriSpeech split (default: test-clean). test-other results "
                               "are saved to their own file, pulse_sweep_test-other.csv")
-    parser.add_argument("--algorithms", type=str, default=",".join(ALL_METHODS),
+    parser.add_argument("--algorithms", type=str, default=",".join(METHODS),
                          help="comma-separated algorithms to run, e.g. mp,comp "
-                              f"(default: all = {','.join(ALL_METHODS)}). Algorithms already "
+                              f"(default: all = {','.join(METHODS)}). Algorithms already "
                               "in the checkpoint are skipped, new ones are merged in")
     parser.add_argument("--workers", type=int, default=None,
                          help=f"parallel synthesis processes (default: {default_workers()})")
@@ -54,9 +54,9 @@ def parse_args():
         parser.error("--k-values must contain positive integers")
 
     args.algo_list = [tok.strip() for tok in args.algorithms.split(",") if tok.strip()]
-    unknown = [a for a in args.algo_list if a not in ALL_METHODS]
+    unknown = [a for a in args.algo_list if a not in METHODS]
     if not args.algo_list or unknown:
-        parser.error(f"--algorithms must be from {list(ALL_METHODS)}; got unknown: {unknown}")
+        parser.error(f"--algorithms must be from {list(METHODS)}; got unknown: {unknown}")
     return args
 
 
