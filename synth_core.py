@@ -3,7 +3,7 @@ import math
 import numpy as np
 from scipy.signal import lfilter
 
-from algorithms import omp, lst, gclst, dense
+from algorithms import mp, omp, comp, lst, gclst, dense
 from lsf import (lpc_to_lsf, lsf_to_lpc, quantize_lsfs, quantize_excitation,
                  delta_max_for_order)
 
@@ -20,6 +20,8 @@ METHODS = {
     "omp": omp,
     "lst": lst,
     "gclst": gclst,
+    "comp": comp,
+    "mp": mp
 }
 
 DENSE_NAME = "dense_lpc"
@@ -81,7 +83,8 @@ def fit_lpc(seg, p):
     H = lpc_matrix(seg, p)
     A = levinson_durbin(seg, p)
     if A is None:
-        A = np.concatenate(([1.0], np.zeros(p)))  
+        A = np.concatenate(([1.0], np.zeros(p)))   # neutral, trivially stable
+    return A, H, A[1:]
 
 def frame_impulse_response(A, L):
     impulse = np.zeros(L)

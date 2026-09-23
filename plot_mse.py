@@ -1,9 +1,5 @@
-"""Quick static plot of experiment_results/mse.csv (MSE vs K, one line per series).
-
-Every row in the CSV -- each algorithm vs the dense reference, and
-omp_vs_gclst (omp's excitation vs gclst's) -- is computed by mse.py with the
-same sum((e - ref)**2) / n formula, so they're all plotted on one MSE axis.
-"""
+"""Quick static plot of experiment_results/mse.csv: MSE vs K for lst, gclst,
+mp, and comp, each against omp (the reference; see mse.py)."""
 
 import csv
 import os
@@ -17,12 +13,10 @@ IN_CSV = os.path.join("experiment_results", "mse.csv")
 OUT_PNG = os.path.join("experiment_results", "mse_plot.png")
 
 COLORS = {
-    "omp": "#2a78d6",
-    "lst": "#eb6834",
-    "gclst": "#1baf7a",
-    "mp": "#eda100",
-    "comp": "#e87ba4",
-    "omp_vs_gclst": "#4a3aa7",
+    "lst_vs_omp": "#eb6834",
+    "gclst_vs_omp": "#1baf7a",
+    "mp_vs_omp": "#eda100",
+    "comp_vs_omp": "#e87ba4",
 }
 
 
@@ -48,8 +42,8 @@ def main():
         ax.plot(ks, vals, marker="o", markersize=4, linewidth=2, color=color, label=name)
 
     ax.set_xlabel("K (pulse count)")
-    ax.set_ylabel("MSE (x1e-5)")
-    ax.set_title("Synthesis MSE vs K")
+    ax.set_ylabel("MSE vs omp (x1e-5)")
+    ax.set_title("Excitation MSE vs omp, by K")
     ax.grid(True, alpha=0.3)
     ax.legend(frameon=False)
     fig.tight_layout()
