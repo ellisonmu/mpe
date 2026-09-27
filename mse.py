@@ -2,9 +2,9 @@
 
 For each K, omp is the reference (dense is no longer used anywhere in this
 file). omp runs closed-loop per utterance to produce that K's (h_w, target_w)
-frames and its own excitation; lst, gclst, mp, and comp are then each run
-open-loop on those same frames, and their MSE against omp's excitation is
-reported.
+frames and its own excitation; the algorithms named by --algorithms (default:
+all of lst, gclst, mp, comp, mpog) are then each run open-loop on those same
+frames, and their MSE against omp's excitation is reported.
 """
 
 import argparse
@@ -19,7 +19,7 @@ from synth_core import GAMMA, L, METHODS, synthesize_mpe
 DEFAULT_K_VALUES = [5, 10, 20, 35]
 
 OMP = METHODS["omp"]
-VS_OMP_NAMES = [name for name in METHODS if name != "omp"]
+ALL_VS_OMP_NAMES = [name for name in METHODS if name != "omp"]
 
 
 def excitation(fn, h_w, target_w, K):
@@ -38,9 +38,18 @@ def parse_args():
     ap.add_argument("--split", choices=["test-clean", "test-other"], default="test-clean")
     ap.add_argument("--k-values", type=str,
                     default=",".join(str(k) for k in DEFAULT_K_VALUES))
+    ap.add_argument("--algorithms", type=str, default=",".join(ALL_VS_OMP_NAMES),
+                    help="comma-separated algorithms to compare against omp, e.g. mpog "
+                         f"(default: all = {','.join(ALL_VS_OMP_NAMES)})")
     ap.add_argument("--out", type=str, default=os.path.join(OUT_DIR, "mse.csv"))
     args = ap.parse_args()
     args.k_list = sorted({int(t) for t in args.k_values.split(",") if t.strip()})
+
+    args.algo_list = [a.strip() for a in args.algorithms.split(",") if a.strip()]
+    unknown = [a for a in args.algo_list if a not in ALL_VS_OMP_NAMES]
+    if not args.algo_list or unknown:
+        ap.error(f"--algorithms must be from {ALL_VS_OMP_NAMES} (omp is always the "
+                 f"reference, not a selectable comparand); got unknown: {unknown}")
     return args
 
 
@@ -63,11 +72,11 @@ def main():
             synthesize_mpe(OMP, audio, args.p, L, K, gamma=args.gamma, capture=capture)
             frames.extend(capture)
 
-        se = {name: 0.0 for name in VS_OMP_NAMES}
+        se = {name: 0.0 for name in args.algo_list}
         n = 0
         for h_w, target_w in frames:
             e_omp = excitation(OMP, h_w, target_w, K)
-            for name in VS_OMP_NAMES:
+            for name in args.algo_list:
                 e = excitation(METHODS[name], h_w, target_w, K)
                 se[name] += np.sum((e - e_omp) ** 2)
             n += len(target_w)

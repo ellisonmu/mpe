@@ -70,7 +70,7 @@ def make_distortion(kind, seed):
 
 def parse_args():
     from mpe_common import (DEFAULT_P, DEFAULT_K, SUBSET_SEED, N_SUBSET, GAMMA,
-                            default_workers)
+                            default_workers, METHODS)
 
     parser = argparse.ArgumentParser(description=__doc__,
                                       formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -91,11 +91,25 @@ def parse_args():
                          help=f"pulse count, held fixed (default: {DEFAULT_K})")
     parser.add_argument("--gamma", type=float, default=GAMMA,
                          help=f"perceptual error-weighting factor (default: {GAMMA})")
+    parser.add_argument("--algorithms", type=str, default=",".join(METHODS),
+                         help="comma-separated algorithms to run, e.g. mp,comp "
+                              f"(default: all = {','.join(METHODS)}). Algorithms already "
+                              "in the checkpoint are skipped, new ones are merged in")
     parser.add_argument("--workers", type=int, default=None,
                          help=f"parallel synthesis processes (default: {default_workers()})")
     parser.add_argument("--no-resume", action="store_true",
                          help="ignore existing checkpoints and recompute everything")
+    parser.add_argument("--fp16", action=argparse.BooleanOptionalAction, default=None,
+                         help="Whisper transcription precision (default: auto -- fp16 iff "
+                              "a CUDA GPU is available; --no-fp16 forces fp32 even on GPU, "
+                              "--fp16 forces fp16 even without a GPU, where it will be slow "
+                              "or unsupported)")
     args = parser.parse_args()
+
+    args.algo_list = [a.strip() for a in args.algorithms.split(",") if a.strip()]
+    unknown = [a for a in args.algo_list if a not in METHODS]
+    if not args.algo_list or unknown:
+        parser.error(f"--algorithms must be from {list(METHODS)}; got unknown: {unknown}")
 
     args.kind_list = [k.strip() for k in args.kinds.split(",") if k.strip()]
     unknown = [k for k in args.kind_list if k not in DISTORTIONS]
@@ -122,9 +136,10 @@ def parse_args():
 def main():
     from mpe_common import (OUT_DIR, load_subset, load_whisper, get_or_compute_baseline,
                             load_checkpoint, save_checkpoint, sweep_config,
-                            run_sweep, plot_sweep)
+                            run_sweep, plot_sweep, set_fp16)
 
     args = parse_args()
+    set_fp16(args.fp16)
 
     print("Loading LibriSpeech test-clean subset...")
     dataset = load_subset(args.n_subset, args.seed)
@@ -132,6 +147,9 @@ def main():
 
     print("Loading Whisper...")
     whisper_model, normalizer = load_whisper()
+    print(f"  device: {next(whisper_model.parameters()).device}, "
+          f"fp16: {'auto' if args.fp16 is None else args.fp16}")
+    print(f"  algorithms={args.algo_list}")
 
     baseline_wer = None
     for kind in args.kind_list:
@@ -158,7 +176,7 @@ def main():
                                      out_name=out_name, workers=args.workers,
                                      resume=not args.no_resume,
                                      distort=make_distortion(kind, args.seed),
-                                     include_input_ref=True)
+                                     include_input_ref=True, methods=args.algo_list)
         plot_sweep(series, present, spec["xlabel"], baseline_wer, out_name)
         print(f"  -> {out_name}.csv / _wer.png")
 

@@ -23,13 +23,29 @@ def mp(h, s, K=100):
     mag = []
     for _ in range(K):
         corr = np.correlate(r, h, mode="full")[len(h)-1:]
-        corr[loc] = 0                        # already-picked positions can't repeat
+        # corr[loc] = 0                      
         Omega = int(np.argmax(np.abs(corr)))
-        c = corr[Omega] / np.sum(h**2)
+        c = corr[Omega] / np.sum(h[:N-Omega] ** 2)
         r[Omega:] = r[Omega:] - c * h[:N-Omega]
         loc.append(Omega)
-        mag.append(c)                        # MP's own coefficient, no final refit
+        mag.append(c)
     return np.array(mag), loc
+
+def mpog(h, s, K=100):
+    N = len(s)
+    r = s.copy()
+    loc = []
+    mag = np.zeros((N, 1))
+    for _ in range(K):
+        corr = np.correlate(r, h, mode="full")[len(h)-1:]                 
+        Omega = int(np.argmax(np.abs(corr)))
+        c = corr[Omega] / np.sum(h[:N-Omega] ** 2)
+        r[Omega:] = r[Omega:] - c * h[:N-Omega]
+        if Omega not in loc:
+            loc.append(Omega)
+        mag[Omega] += c 
+    return mag[mag != 0].tolist(), np.nonzero(mag)[0].tolist()
+
 
 def omp(h, s, K=100):
     N = len(s)
@@ -38,7 +54,7 @@ def omp(h, s, K=100):
     H = np.empty((N, 0))
     for _ in range(K):
         corr = np.correlate(err, h, mode="full")[len(h)-1:]
-        corr[loc] = 0                        # already-picked positions can't repeat
+        corr[loc] = 0                      
         Omega = np.argmax(np.abs(corr))
         loc.append(Omega)
         atom = np.zeros(N)
@@ -53,11 +69,11 @@ def comp(h, s, K=100):
     err = s.copy()
     loc = []
     H = np.zeros((N, K))                
-    Lc = np.zeros((K, K))                # lower-triangular Cholesky of H^T H
-    rhs = np.zeros(K)                    # H^T s, extended one entry per iteration
+    Lc = np.zeros((K, K))               
+    rhs = np.zeros(K)                   
     for k in range(K):
         corr = np.correlate(err, h, mode="full")[len(h)-1:]
-        corr[loc] = 0                        # already-picked positions can't repeat
+        # corr[loc] = 0  
         Omega = int(np.argmax(np.abs(corr)))
         atom = np.zeros(N)
         atom[Omega:] = h[:N-Omega]
@@ -91,21 +107,18 @@ def dense(h, s, K=None):
 def gclst(h, s, K=100):
     N = len(s)
     loc = []
-    H = np.empty((N, 0))
+    H = np.zeros((N, K))    # preallocated: gclst always fills all K columns,
+                             # since corr[loc]=0 rules out ever repeating a pick
     corr = np.correlate(s, h, mode="full")[len(h)-1:]
     auto = np.correlate(h, h, mode="full")
     gram = np.zeros(N)
-    for _ in range(K):
+    for k in range(K):
         Omega = int(np.argmax(np.abs(corr)))
-        # for j in np.where(corr != 0)[0]:
-        #     lag = j - Omega
-        #     gram[j] = auto[len(h)-1 + lag]
         nz = np.where(corr != 0)[0]
         gram[nz] = auto[len(h)-1 + nz - Omega]
-        corr = corr - gram * (corr[Omega] / np.sum(h**2))
+        corr = corr - gram * (corr[Omega] / np.sum(h[:N-Omega] ** 2))
         loc.append(Omega)
-        atom = np.zeros(N)
-        atom[Omega:] = h[:N-Omega]
-        H = np.column_stack((H, atom))
+        H[Omega:, k] = h[:N-Omega]
         corr[loc] = 0
     return _finalize(H, s, loc)
+

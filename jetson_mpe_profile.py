@@ -30,7 +30,7 @@ import soundfile as sf
 from synth_core import (SR, FRAME_MS, L, GAMMA, DENSE_NAME, METHODS,
                         method_fn, synthesize_mpe)
 
-DEFAULT_K_VALUES = [2,3,4,5,6,7,8,9,10,12,14,16,18,20,25,30,35]
+DEFAULT_K_VALUES = [2,3,4,5,6,7,8,9,10,12,14,15,16,18,20,25,30,35]
 DEFAULT_WARMUP = 200
 DEFAULT_ITERS = 1000
 DEFAULT_REPEATS = 5

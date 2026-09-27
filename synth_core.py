@@ -3,7 +3,7 @@ import math
 import numpy as np
 from scipy.signal import lfilter
 
-from algorithms import mp, omp, comp, lst, gclst, dense
+from algorithms import mp, mpog, omp, comp, lst, gclst, dense
 from lsf import (lpc_to_lsf, lsf_to_lpc, quantize_lsfs, quantize_excitation,
                  delta_max_for_order)
 
@@ -21,7 +21,8 @@ METHODS = {
     "lst": lst,
     "gclst": gclst,
     "comp": comp,
-    "mp": mp
+    "mp": mp,
+    "mpog": mpog,
 }
 
 DENSE_NAME = "dense_lpc"
@@ -107,7 +108,7 @@ def _zero_input_response(A, hist, n_samples):
     return ring
 
 def synthesize_mpe(fn, x, p, L, K, gamma=GAMMA, lsf_bits=LSF_BITS, exc_bits=EXC_BITS,
-                    pole_margin=POLE_MARGIN, capture=None):
+                    pole_margin=POLE_MARGIN, capture=None, nnz_capture=None):
     N = len(x)
     n_frames = N // L
     out = np.zeros(N)
@@ -157,6 +158,11 @@ def synthesize_mpe(fn, x, p, L, K, gamma=GAMMA, lsf_bits=LSF_BITS, exc_bits=EXC_
         m = quantize_excitation(m, n_bits=exc_bits)
         e = np.zeros(len(seg))
         e[locs] = m
+        if nnz_capture is not None:
+            # actual active pulses after quantization -- can be < K if
+            # quantize_excitation rounds a small magnitude to zero, or < len(locs)
+            # for an algorithm whose picks aren't all distinct/nonzero
+            nnz_capture.append(int(np.count_nonzero(e)))
 
         frame_out = ring + np.convolve(e, h)[:len(seg)]
         out[start:end] = np.clip(frame_out, -clamp, clamp)
@@ -168,10 +174,21 @@ def method_fn(name):
 
 
 def synthesize_utterance_job(job):
-    idx, audio, names, p, K, gamma = job
+    # trailing track_nnz flag is optional so existing 6-tuple callers are
+    # unaffected; when set, outs[name] is (audio, nnz_per_frame) instead of
+    # just audio, letting a caller measure bitrate off the same synthesis
+    # pass instead of a second one
+    idx, audio, names, p, K, gamma, *rest = job
+    track_nnz = rest[0] if rest else False
     audio = np.asarray(audio, dtype=float)
     outs = {}
     for name in names:
         k = 0 if name == DENSE_NAME else K     # dense ignores K
-        outs[name] = synthesize_mpe(method_fn(name), audio, p, L, k, gamma=gamma)
+        if track_nnz:
+            nnz = []
+            synthesized = synthesize_mpe(method_fn(name), audio, p, L, k, gamma=gamma,
+                                          nnz_capture=nnz)
+            outs[name] = (synthesized, nnz)
+        else:
+            outs[name] = synthesize_mpe(method_fn(name), audio, p, L, k, gamma=gamma)
     return idx, outs

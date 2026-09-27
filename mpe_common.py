@@ -10,6 +10,7 @@ worker processes can import it cheaply.
 import os
 import csv
 import json
+import math
 import random
 import contextlib
 from concurrent.futures import ProcessPoolExecutor
@@ -79,9 +80,29 @@ def load_whisper():
 # Metrics
 # ---------------------------------------------------------------------------
 
+# None = auto (fp16 iff CUDA is available); True/False overrides that via
+# set_fp16(), e.g. a CLI --fp16/--no-fp16 flag
+_FP16 = None
+
+
+def set_fp16(value):
+    """Override Whisper's fp16 setting for transcribe(). None restores the
+    auto default (fp16 iff torch.cuda.is_available())."""
+    global _FP16
+    _FP16 = value
+
+
+def _resolve_fp16():
+    return torch.cuda.is_available() if _FP16 is None else _FP16
+
+
 def transcribe(model, audio):
     try:
-        result = model.transcribe(audio.astype(np.float32), fp16=False, language="en")
+        # fp16 needs CUDA tensor cores to actually help; on CPU it's
+        # unsupported/no-op at best, so the auto default gates it on whatever
+        # device Whisper actually loaded onto -- set_fp16() can override this
+        result = model.transcribe(audio.astype(np.float32),
+                                  fp16=_resolve_fp16(), language="en")
         return result["text"]
     except Exception:
         return ""
@@ -251,8 +272,29 @@ def default_workers():
 
 def run_sweep(dataset, param_name, param_values, fixed_params, whisper_model, normalizer,
               gamma=GAMMA, out_name=None, workers=None, resume=True,
-              distort=None, include_input_ref=False):
-    series_names = list(METHODS) + [DENSE_NAME]
+              distort=None, include_input_ref=False, methods=None, bitrate_out=None,
+              bitrate_save_cb=None, per_utterance_out=None):
+    """`methods` (names from METHODS, default: all of METHODS) selects which
+    algorithms to run. Algorithms already present in the checkpoint for a value
+    are skipped and new ones are merged into that value's row, so a run with
+    a subset of algorithms can be topped up later with the rest.
+
+    `per_utterance_out`, if given a list, gets a {"K", "p", "algorithm",
+    "utterance", "wer"} row appended per (algorithm, utterance) actually
+    transcribed this call -- the individual WERs that normally only feed
+    bootstrap_ci() and then get discarded.
+
+    `bitrate_out`, if given a list, gets a {"algorithm", "K", "k_eff",
+    "bitrate_bps"} row appended per (algorithm, val) actually synthesized this
+    call -- off the same synthesis pass used for WER, not a second one. A
+    value skipped via the checkpoint (already done) contributes no bitrate row,
+    since it isn't re-synthesized; top up with --no-resume if you need bitrate
+    for values a prior run already finished. `bitrate_save_cb`, if given, is
+    called with `bitrate_out` right after each val's rows are appended, so
+    bitrate persists to disk per-val the same way the WER checkpoint does,
+    instead of only after the whole sweep returns."""
+    sel_methods = list(METHODS) if methods is None else list(methods)
+    series_names = sel_methods + [DENSE_NAME]
     if include_input_ref:
         series_names.append(INPUT_NAME)
 
@@ -260,11 +302,18 @@ def run_sweep(dataset, param_name, param_values, fixed_params, whisper_model, no
                           len(dataset), fixed_params.get("seed"))
     ckpt = load_checkpoint(out_name, config, resume) if out_name else {
         "config": config, "series": series_names, "baseline_wer": None, "by_value": {}}
-    ckpt["series"] = series_names
+    # merge with whatever series a prior --algorithms selection already left in
+    # the checkpoint, so topping up doesn't drop earlier algorithms from it
+    existing_series = ckpt.get("series") or []
+    ckpt["series"] = existing_series + [n for n in series_names if n not in existing_series]
     by_value = ckpt["by_value"]
 
-    todo = [v for v in param_values if str(v) not in by_value]
-    done = [v for v in param_values if str(v) in by_value]
+    def has_all(val):
+        block = by_value.get(str(val), {})
+        return all(name in block for name in sel_methods)
+
+    todo = [v for v in param_values if not has_all(v)]
+    done = [v for v in param_values if has_all(v)]
     if done:
         print(f"  skipping {len(done)} already done: {done}")
     if not todo:
@@ -291,27 +340,59 @@ def run_sweep(dataset, param_name, param_values, fixed_params, whisper_model, no
             audios = [audio if distort is None else distort(audio, val, i)
                       for i, (audio, _) in enumerate(dataset)]
 
-            names = list(METHODS)
-            need_dense = (not reuse_dense) or (dense_cached is None)
+            existing_block = by_value.get(str(val), {})
+            missing = [n for n in sel_methods if n not in existing_block]
+            need_dense = DENSE_NAME not in existing_block and (
+                (not reuse_dense) or (dense_cached is None))
+            names = list(missing)
             if need_dense:
                 names.append(DENSE_NAME)
 
-            jobs = [(i, a, names, p, K, gamma) for i, a in enumerate(audios)]
+            track_nnz = bitrate_out is not None
+            jobs = [(i, a, names, p, K, gamma, track_nnz) for i, a in enumerate(audios)]
             synth = dict(pmap(synthesize_utterance_job, jobs))
 
+            need_input_ref = include_input_ref and INPUT_NAME not in existing_block
             wers = {n: [] for n in names}
-            if include_input_ref:
+            if need_input_ref:
                 wers[INPUT_NAME] = []
+            nnz_totals = {n: [] for n in names} if track_nnz else None
             for i, (_, transcript) in enumerate(dataset):
                 for n in names:
-                    hyp = transcribe(whisper_model, synth[i][n])
-                    wers[n].append(compute_wer(normalizer, transcript, hyp))
-                if include_input_ref:
+                    out = synth[i][n]
+                    audio_out, nnz = out if track_nnz else (out, None)
+                    hyp = transcribe(whisper_model, audio_out)
+                    wer = compute_wer(normalizer, transcript, hyp)
+                    wers[n].append(wer)
+                    if per_utterance_out is not None:
+                        per_utterance_out.append({"K": K, "p": p, "algorithm": n,
+                                                  "utterance": i, "wer": wer})
+                    if track_nnz and n != DENSE_NAME:
+                        nnz_totals[n].extend(nnz)
+                if need_input_ref:
                     hyp = transcribe(whisper_model, audios[i])
-                    wers[INPUT_NAME].append(compute_wer(normalizer, transcript, hyp))
+                    wer = compute_wer(normalizer, transcript, hyp)
+                    wers[INPUT_NAME].append(wer)
+                    if per_utterance_out is not None:
+                        per_utterance_out.append({"K": K, "p": p, "algorithm": INPUT_NAME,
+                                                  "utterance": i, "wer": wer})
 
-            block = {}
-            for n in METHODS:
+            if track_nnz:
+                for n in missing:
+                    if n == DENSE_NAME or not nnz_totals[n]:
+                        continue
+                    k_eff = sum(nnz_totals[n]) / len(nnz_totals[n])
+                    k_int = max(0, min(L, round(k_eff)))
+                    position_bits = (math.ceil(math.log2(math.comb(L, k_int)))
+                                      if 0 < k_int < L else 0)
+                    bps = (SR / L) * (p * LSF_BITS + k_eff * EXC_BITS + position_bits)
+                    bitrate_out.append({"algorithm": n, "K": K, "k_eff": k_eff,
+                                        "bitrate_bps": bps})
+                if bitrate_save_cb is not None:
+                    bitrate_save_cb(bitrate_out)
+
+            block = dict(existing_block)
+            for n in missing:
                 mean, lo, hi = bootstrap_ci(wers[n])
                 block[n] = {"wer": mean, "wer_lo": lo, "wer_hi": hi}
             if need_dense:
@@ -319,9 +400,9 @@ def run_sweep(dataset, param_name, param_values, fixed_params, whisper_model, no
                 block[DENSE_NAME] = {"wer": mean, "wer_lo": lo, "wer_hi": hi}
                 if reuse_dense:
                     dense_cached = block[DENSE_NAME]
-            else:
+            elif DENSE_NAME not in block and dense_cached is not None:
                 block[DENSE_NAME] = dict(dense_cached)
-            if include_input_ref:
+            if need_input_ref:
                 mean, lo, hi = bootstrap_ci(wers[INPUT_NAME])
                 block[INPUT_NAME] = {"wer": mean, "wer_lo": lo, "wer_hi": hi}
 
