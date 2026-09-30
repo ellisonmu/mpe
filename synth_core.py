@@ -84,7 +84,7 @@ def fit_lpc(seg, p):
     H = lpc_matrix(seg, p)
     A = levinson_durbin(seg, p)
     if A is None:
-        A = np.concatenate(([1.0], np.zeros(p)))   # neutral, trivially stable
+        A = np.concatenate(([1.0], np.zeros(p)))  
     return A, H, A[1:]
 
 def frame_impulse_response(A, L):
@@ -108,7 +108,8 @@ def _zero_input_response(A, hist, n_samples):
     return ring
 
 def synthesize_mpe(fn, x, p, L, K, gamma=GAMMA, lsf_bits=LSF_BITS, exc_bits=EXC_BITS,
-                    pole_margin=POLE_MARGIN, capture=None, nnz_capture=None):
+                    pole_margin=POLE_MARGIN, capture=None, nnz_capture=None,
+                    exc_capture=None):
     N = len(x)
     n_frames = N // L
     out = np.zeros(N)
@@ -120,6 +121,8 @@ def synthesize_mpe(fn, x, p, L, K, gamma=GAMMA, lsf_bits=LSF_BITS, exc_bits=EXC_
         start, end = i * L, (i + 1) * L
         seg = x[start:end]
         if len(seg) <= p or np.sum(seg ** 2) < 1e-12:
+            if exc_capture is not None:
+                exc_capture.append(np.zeros(L))
             continue
         A_true, _, _ = fit_lpc(seg, p)
         hist = np.pad(out[max(0, start - p):start][::-1], (0, max(0, p - start)))
@@ -140,6 +143,8 @@ def synthesize_mpe(fn, x, p, L, K, gamma=GAMMA, lsf_bits=LSF_BITS, exc_bits=EXC_
 
         h = frame_impulse_response(A, L)
         if not np.all(np.isfinite(h)) or np.abs(h).max() > 1e6:
+            if exc_capture is not None:
+                exc_capture.append(np.zeros(L))
             continue
 
         ring = _zero_input_response(A, hist, len(seg))
@@ -159,10 +164,9 @@ def synthesize_mpe(fn, x, p, L, K, gamma=GAMMA, lsf_bits=LSF_BITS, exc_bits=EXC_
         e = np.zeros(len(seg))
         e[locs] = m
         if nnz_capture is not None:
-            # actual active pulses after quantization -- can be < K if
-            # quantize_excitation rounds a small magnitude to zero, or < len(locs)
-            # for an algorithm whose picks aren't all distinct/nonzero
             nnz_capture.append(int(np.count_nonzero(e)))
+        if exc_capture is not None:
+            exc_capture.append(e.copy())
 
         frame_out = ring + np.convolve(e, h)[:len(seg)]
         out[start:end] = np.clip(frame_out, -clamp, clamp)
@@ -174,10 +178,6 @@ def method_fn(name):
 
 
 def synthesize_utterance_job(job):
-    # trailing track_nnz flag is optional so existing 6-tuple callers are
-    # unaffected; when set, outs[name] is (audio, nnz_per_frame) instead of
-    # just audio, letting a caller measure bitrate off the same synthesis
-    # pass instead of a second one
     idx, audio, names, p, K, gamma, *rest = job
     track_nnz = rest[0] if rest else False
     audio = np.asarray(audio, dtype=float)
