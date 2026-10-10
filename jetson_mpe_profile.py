@@ -1,6 +1,3 @@
-"""Jetson TX2 latency/throughput profiling for the MPE sparse-search algorithms.
-"""
-
 import argparse
 import csv
 import glob
@@ -66,7 +63,6 @@ def get_cupy(device):
 
 
 def container_tag():
-    """Short description of what this is running on, for the CSV."""
     bits = [platform.machine(), f"py{platform.python_version()}",
             f"numpy{np.__version__}", f"threads={THREADS}"]
     core = os.environ.get("OPENBLAS_CORETYPE")

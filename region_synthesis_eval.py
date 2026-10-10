@@ -1,29 +1,3 @@
-"""
-Whole-utterance closed-loop synthesis + fidelity comparison across omp,
-mpog, lst, and gclst, pooled over --n-utterances LibriSpeech utterances
-(like the WER sweeps -- the whole utterance is synthesized, no fixed-size
-region or VAD/start detection).
-
-For each utterance and algorithm:
-
-  - mel_l2: raw L2 (Frobenius) norm between the clean and synthesized
-    signal's 80-channel log-magnitude Mel spectrograms, computed exactly as
-    Whisper does it (25 ms window / 10 ms stride at 16 kHz --
-    whisper.audio.log_mel_spectrogram).
-  - snr_db: *weighted* SNR, i.e. computed in the same perceptually-weighted
-    domain the pulse-search algorithm itself optimizes over, not raw
-    time-domain SNR. Per L=160 frame, that's target_w (the weighted signal
-    the excitation must explain, after LPC zero-input-response subtraction
-    and the W(z)=A(z)/A(z/gamma) weighting filter) vs. the weighted
-    reconstruction conv(e, h_w) built from that frame's actual (quantized)
-    chosen excitation e and weighted impulse response h_w -- the exact
-    target/impulse-response pair fn(h_w, target_w, K=K) was given. Signal
-    and noise energy are summed over every frame of the whole utterance
-    before taking one SNR, matching snr.py's formula.
-
-Both metrics are reported as a per-utterance mean with a 95% bootstrap CI.
-"""
-
 import argparse
 import csv
 import os
@@ -108,8 +82,6 @@ def synthesize_weighted(fn, x, p, L, K, gamma, lsf_bits=LSF_BITS, exc_bits=EXC_B
 
 
 def snr_from_energies(signal_energy, noise_energy):
-    """inf when the error is exactly zero; -inf when the signal itself is
-    silent."""
     if noise_energy <= 0.0:
         return float("inf")
     if signal_energy <= 0.0:
@@ -151,7 +123,8 @@ def parse_args():
 def main():
     args = parse_args()
 
-    print(f"Loading LibriSpeech {args.split} subset...")
+    print(f"Loading LibriSpeech {args.split} subset (seed={args.seed}, "
+          f"fixed -- reproducible even when n-utterances is smaller than the full split)...")
     dataset = load_subset(args.n_utterances, args.seed, split=args.split)
 
     mel_l2s = {name: [] for name in args.algo_list}

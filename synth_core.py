@@ -109,7 +109,7 @@ def _zero_input_response(A, hist, n_samples):
 
 def synthesize_mpe(fn, x, p, L, K, gamma=GAMMA, lsf_bits=LSF_BITS, exc_bits=EXC_BITS,
                     pole_margin=POLE_MARGIN, capture=None, nnz_capture=None,
-                    exc_capture=None):
+                    exc_capture=None, quantize_lsf=True, quantize_exc=True):
     N = len(x)
     n_frames = N // L
     out = np.zeros(N)
@@ -128,7 +128,7 @@ def synthesize_mpe(fn, x, p, L, K, gamma=GAMMA, lsf_bits=LSF_BITS, exc_bits=EXC_
         hist = np.pad(out[max(0, start - p):start][::-1], (0, max(0, p - start)))
 
         A_hat = A_true
-        if p % 2 == 0:
+        if quantize_lsf and p % 2 == 0:
             try:
                 lsf = lpc_to_lsf(A_true)
                 candidate = lsf_to_lpc(quantize_lsfs(lsf, n_bits=lsf_bits,
@@ -160,7 +160,8 @@ def synthesize_mpe(fn, x, p, L, K, gamma=GAMMA, lsf_bits=LSF_BITS, exc_bits=EXC_
             capture.append((h_w.copy(), target_w.copy()))
 
         m, locs = fn(h_w, target_w, K=K)
-        m = quantize_excitation(m, n_bits=exc_bits)
+        if quantize_exc:
+            m = quantize_excitation(m, n_bits=exc_bits)
         e = np.zeros(len(seg))
         e[locs] = m
         if nnz_capture is not None:

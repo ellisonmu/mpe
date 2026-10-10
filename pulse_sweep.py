@@ -1,27 +1,3 @@
-"""
-Pulse-count (sparsity) sweep: fix LPC order p, vary the number of pulses K,
-for omp/lst/gclst plus a dense (non-sparse) excitation reference run through
-the same closed-loop pipeline. See mpe_common.py / synth_core.py.
-
-Results are checkpointed per K value, so re-running skips any K already done.
-
-Optionally (--bitrate, on by default) also measures the coded bitrate per
-(algorithm, K):
-
-    R(K) = (fs/L) * (p*b2 + K_eff*b1 + ceil(log2(C(L, K_eff))))
-
-p*b2 is the LSF side info, K_eff*b1 the pulse-magnitude side info, and the
-ceil(log2(C(L, K_eff))) term the combinatorial position code. K_eff is the
-*actual* mean count of nonzero excitation samples per frame for that
-algorithm/K -- not the nominal K -- since quantize_excitation can round a
-small pulse to zero and some algorithms (mpog with repeats, comp's early
-break) can settle on fewer than K distinct active positions. It's read off
-the same synthesis pass run_sweep already does for WER (see bitrate_out in
-mpe_common.run_sweep) rather than a second one, so turning it on is nearly
-free -- except it means a --no-resume-free rerun of an already-checkpointed
-K contributes no bitrate row for that K, since it isn't re-synthesized.
-"""
-
 import argparse
 import csv
 import os
@@ -117,7 +93,8 @@ def main():
     # test-clean keeps the original filename so existing results are reused
     out_name = "pulse_sweep" if args.split == "test-clean" else f"pulse_sweep_{args.split}"
 
-    print(f"Loading LibriSpeech {args.split} subset...")
+    print(f"Loading LibriSpeech {args.split} subset (seed={args.seed}, "
+          f"fixed -- reproducible even when n-subset is smaller than the full split)...")
     dataset = load_subset(args.n_subset, args.seed, split=args.split)
     print(f"  {len(dataset)} utterances")
 
