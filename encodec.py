@@ -1,14 +1,3 @@
-"""Isolated test: Facebook EnCodec scored by WER, as an external neural-codec
-reference point alongside the project's own MPE algorithms and LPC-10 (see
-lpc10_wer.py, which this mirrors).
-
-For each utterance and each --bandwidths setting: resample to the model's
-24 kHz, encode/decode through facebook/encodec_24khz, resample the decoded
-audio back to 16 kHz, transcribe with Whisper, and score WER against the
-reference transcript (and against the clean-audio baseline WER, computed
-once for comparison).
-"""
-
 import argparse
 import csv
 import math
