@@ -1,12 +1,3 @@
-"""Pulse sweep scored by excitation MSE instead of WER.
-
-For each K, omp is the reference (dense is no longer used anywhere in this
-file). omp runs closed-loop per utterance to produce that K's (h_w, target_w)
-frames and its own excitation; the algorithms named by --algorithms (default:
-all of lst, gclst, mp, comp, mpog) are then each run open-loop on those same
-frames, and their MSE against omp's excitation is reported.
-"""
-
 import argparse
 import csv
 import os
