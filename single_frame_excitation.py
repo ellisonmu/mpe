@@ -1,23 +1,3 @@
-"""
-Multi-frame excitation comparison: run omp, mpog, lst, and gclst separately
-on a 1600-sample (100 ms) region of a single LibriSpeech utterance, made up
-of 10 consecutive L=160-sample (10 ms) coding frames -- the project's real
-frame size (see synth_core.L). Each method runs its own real closed-loop
-synthesis (synth_core.synthesize_mpe, frame-by-frame, each frame's LPC
-history built from that method's own already-synthesized output, exactly as
-in a real sweep), and the 10 frames' excitation signals are concatenated
-into one 1600-sample signal per method.
-
-The region is picked by finding where the audio starts: the first L=160
-frame whose energy clears a fixed fraction of the utterance's peak frame
-energy (i.e. leading silence is skipped), then taking that frame and the
-next 9 frames after it.
-
-Writes each method's excitation signal (one column per method, one row per
-sample) to a CSV, and plots them stacked on a shared x-axis with the 10
-sub-frame boundaries marked.
-"""
-
 import argparse
 import csv
 import os
@@ -85,10 +65,6 @@ def main():
     print(f"selected region: frames {region_start_frame}-{region_start_frame + N_SUBFRAMES - 1} "
           f"({t0:.1f}-{t1:.1f} ms), p={args.p}, K={args.k} per {FRAME_L}-sample frame")
 
-    # each method runs its own real closed-loop synthesis (own synthesized
-    # history feeds each subsequent frame's LPC), from utterance start
-    # through the end of the region -- frames only depend on the past, so
-    # trimming the tail doesn't change anything before region_end.
     excitations = {}
     for name, fn in METHODS.items():
         exc_frames = []
