@@ -19,10 +19,6 @@ METHODS = {"omp": omp, "mpog": mpog, "lst": lst, "gclst": gclst}
 
 def synthesize_weighted(fn, x, p, L, K, gamma, lsf_bits=LSF_BITS, exc_bits=EXC_BITS,
                         pole_margin=POLE_MARGIN):
-    """Same closed-loop frame loop as synth_core.synthesize_mpe, additionally
-    accumulating perceptually-weighted signal/noise energy in the exact
-    domain fn(h_w, target_w, K=K) searches in. Returns (out, signal_energy,
-    noise_energy)."""
     N = len(x)
     n_frames = N // L
     out = np.zeros(N)
