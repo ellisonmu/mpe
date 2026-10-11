@@ -11,9 +11,6 @@ DEFAULT_K_VALUES = [5, 10, 20, 30]
 
 
 def snr_db(x, y):
-    """SNR in dB between clean x and coded y (same length). inf when the
-    error is exactly zero; -inf (rather than a divide-by-zero error) when x
-    itself is silent."""
     noise = np.sum((x - y) ** 2)
     signal = np.sum(x ** 2)
     if noise <= 0.0:
@@ -43,12 +40,6 @@ def parse_args():
     ap.add_argument("--algorithms", type=str, default=",".join(METHODS),
                     help="comma-separated algorithms to measure, e.g. mp,comp "
                          f"(default: all = {','.join(METHODS)})")
-    ap.add_argument("--quantize-lsf", action=argparse.BooleanOptionalAction, default=True,
-                    help="quantize the LSFs (default: on; --no-quantize-lsf uses the "
-                         "unquantized LPC filter)")
-    ap.add_argument("--quantize-exc", action=argparse.BooleanOptionalAction, default=True,
-                    help="quantize the excitation pulse amplitudes (default: on; "
-                         "--no-quantize-exc keeps the exact solved amplitudes)")
     ap.add_argument("--out", type=str, default=os.path.join(OUT_DIR, "snr.csv"))
     args = ap.parse_args()
 
@@ -72,7 +63,6 @@ def main():
     print(f"Loading LibriSpeech {args.split} subset...")
     dataset = load_subset(args.n_subset, args.seed, split=args.split)
     print(f"  {len(dataset)} utterances")
-    print(f"  quantize_lsf={args.quantize_lsf}, quantize_exc={args.quantize_exc}")
 
     rows = []
     for K in args.k_list:
@@ -85,9 +75,7 @@ def main():
                 x = x[:n_frames * L]   # synthesize_mpe only fills whole frames
                 if len(x) == 0:
                     continue
-                y = synthesize_mpe(fn, x, args.p, L, K, gamma=args.gamma,
-                                   quantize_lsf=args.quantize_lsf,
-                                   quantize_exc=args.quantize_exc)
+                y = synthesize_mpe(fn, x, args.p, L, K, gamma=args.gamma)
                 snrs.append(snr_db(x, y))
 
             finite = [v for v in snrs if np.isfinite(v)]
