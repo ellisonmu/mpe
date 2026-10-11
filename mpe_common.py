@@ -1,12 +1,3 @@
-"""
-Experiment harness shared by sparsity_sweep.py (K) and order_sweep.py (p):
-LibriSpeech loading, Whisper/WER metrics, checkpointed sweeps with parallel
-synthesis, and plotting.
-
-The DSP itself lives in synth_core.py, which is deliberately torch-free so
-worker processes can import it cheaply.
-"""
-
 import os
 import csv
 import json
