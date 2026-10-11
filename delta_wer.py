@@ -1,18 +1,3 @@
-"""
-Paired per-utterance WER deltas between algorithm pairs, from the
---per-utterance CSV that pulse_sweep.py produces (K,p,algorithm,utterance,wer).
-
-For each of (omp, gclst), (omp, mpog), (mpog, gclst): for every K present in
-the file, pairs up each utterance's WER under both algorithms (delta = wer_a -
-wer_b) and reports the mean with a 95% bootstrap CI over utterances, plus one
-more row pooling every K's utterances together ("all"). `significant` is
-true when the 95% CI excludes 0.
-
-Also writes delta_wer_summary.csv: just the pooled ("all") row per pair, with
-a plain-language `verdict` (e.g. "significant, gclst beats mpog") -- the
-condensed form of the report, not the full per-K breakdown.
-"""
-
 import argparse
 import csv
 import os
