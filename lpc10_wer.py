@@ -1,14 +1,3 @@
-"""Isolated test: LPC-10 (2400 bps, FS-1015) scored by WER, as an external
-codec reference point alongside the project's own MPE algorithms.
-
-For each utterance: resample to 8 kHz mono, encode/decode through the
-reference LPC-10 codec (tools/lpc10/{nuke,unnuke}), resample the decoded
-audio back to 16 kHz, transcribe with Whisper, and score WER against the
-reference transcript (and against the clean-audio baseline WER, for
-comparison). See tools/lpc10/README.md for what these binaries are and how
-to rebuild them (e.g. on the Jetson).
-"""
-
 import argparse
 import csv
 import os
