@@ -1,2 +1,1 @@
-This is the code for the paper: Multi-Pulse Excitation Linear Predictive Coding 
-\\via Gram-Corrected Thresholding.
+This is the code for the paper: Is Joint Re-Orthogonalization Necessary? Excitation Search in Multi-Pulse LPC for ASR
