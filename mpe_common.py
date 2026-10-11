@@ -66,19 +66,10 @@ def load_subset(n=N_SUBSET, seed=SUBSET_SEED, split="test-clean"):
 def load_whisper():
     return whisper.load_model(WHISPER_MODEL_NAME), EnglishTextNormalizer()
 
-
-# ---------------------------------------------------------------------------
-# Metrics
-# ---------------------------------------------------------------------------
-
-# None = auto (fp16 iff CUDA is available); True/False overrides that via
-# set_fp16(), e.g. a CLI --fp16/--no-fp16 flag
 _FP16 = None
 
 
 def set_fp16(value):
-    """Override Whisper's fp16 setting for transcribe(). None restores the
-    auto default (fp16 iff torch.cuda.is_available())."""
     global _FP16
     _FP16 = value
 
@@ -265,25 +256,6 @@ def run_sweep(dataset, param_name, param_values, fixed_params, whisper_model, no
               gamma=GAMMA, out_name=None, workers=None, resume=True,
               distort=None, include_input_ref=False, methods=None, bitrate_out=None,
               bitrate_save_cb=None, per_utterance_out=None):
-    """`methods` (names from METHODS, default: all of METHODS) selects which
-    algorithms to run. Algorithms already present in the checkpoint for a value
-    are skipped and new ones are merged into that value's row, so a run with
-    a subset of algorithms can be topped up later with the rest.
-
-    `per_utterance_out`, if given a list, gets a {"K", "p", "algorithm",
-    "utterance", "wer"} row appended per (algorithm, utterance) actually
-    transcribed this call -- the individual WERs that normally only feed
-    bootstrap_ci() and then get discarded.
-
-    `bitrate_out`, if given a list, gets a {"algorithm", "K", "k_eff",
-    "bitrate_bps"} row appended per (algorithm, val) actually synthesized this
-    call -- off the same synthesis pass used for WER, not a second one. A
-    value skipped via the checkpoint (already done) contributes no bitrate row,
-    since it isn't re-synthesized; top up with --no-resume if you need bitrate
-    for values a prior run already finished. `bitrate_save_cb`, if given, is
-    called with `bitrate_out` right after each val's rows are appended, so
-    bitrate persists to disk per-val the same way the WER checkpoint does,
-    instead of only after the whole sweep returns."""
     sel_methods = list(METHODS) if methods is None else list(methods)
     series_names = sel_methods + [DENSE_NAME]
     if include_input_ref:
